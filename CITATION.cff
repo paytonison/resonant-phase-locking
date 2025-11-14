@@ -2,8 +2,8 @@ cff-version: 1.2.0
 message: "If you use this work, please cite it."
 title: "Resonant Phase-Locking: Stabilizing Long-Horizon Reasoning and Continual Adaptation via Phase-Synchronized Feature Routing"
 authors:
-  - family-names: "Payton"
-    given-names: ""
+  - family-names: "Ison"
+    given-names: "Payton"
 date-released: "2025-11-14"
 doi: "TO-BE-ASSIGNED-BY-ZENODO"
 version: "0.1.0"
