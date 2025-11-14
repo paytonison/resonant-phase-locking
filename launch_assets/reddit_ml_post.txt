@@ -1,0 +1,19 @@
+**[Research/Code] Resonant Phase-Locking: Stabilizing Long-Horizon Reasoning and Continual Adaptation via Phase-Synchronized Feature Routing**
+
+**TL;DR**: Add a tiny phase module to transformers; gate attention/MLP by phase alignment (cos Δθ); add a Kuramoto-style coupling step. Features that should persist across time phase-lock, making long-horizon reasoning more stable and continual learning less forgetful.
+
+**Paper (PDF)**: [Zenodo DOI link]  
+**Code**: [GitHub link]
+
+**Why care?**
+- Long plans and loops don’t drift as easily.
+- Distractors are off-phase → less interference.
+- In sequential tasks (no rehearsal), forgetting drops.
+
+**What’s inside**
+- Method section with exact equations
+- Toy Kuramoto sims + sequential learning toy
+- Pseudocode for an RPL attention block
+- Discussion on interpretability and circuits
+
+I’m looking for failure cases and strong baselines you want tested.

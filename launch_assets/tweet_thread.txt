@@ -1,0 +1,33 @@
+THREAD — Resonant Phase-Locking (RPL)
+
+1/ Transformers are great at pattern completion, bad at keeping a plan alive over long contexts or across sequential tasks. I built a tiny, general fix.
+
+2/ RPL adds a learnable phase to each token + a coupling step (Kuramoto-style). Attention & MLP are gated by phase alignment (cos Δθ). Features that belong together phase-lock.
+
+3/ Why it matters:
+• Long-horizon reasoning stays stable
+• Distractors get down-weighted (off-phase)
+• Continual learning forgets less
+
+4/ Mechanism:
+a_ij = q_i·k_j / sqrt(d) + λ cos(θ_i - θ_j)
+and a small Kuramoto-like update on θ per step using attention as the neighborhood.
+
+5/ It’s a minimal inductive bias that lets the model create “rhythms” for subroutines (loops, blocks, plans). RPL is differentiable, tiny, and easy to bolt on.
+
+6/ Paper (PDF) + code:
+[Zenodo DOI link here]
+[GitHub repo link here]
+
+7/ Results (toy & programmatic):
+• Better long-context generalization
+• Robust to adversarial distractors
+• Reduced catastrophic forgetting (no rehearsal)
+
+8/ Ablations show gains come from phase gating, not parameter count. You can implement it with cos/sin or a complex channel.
+
+9/ If you care about mechanistic interpretability, phases make circuits easier to trace — you can literally see where a routine is in its cycle.
+
+10/ Link again:
+[Zenodo]
+[GitHub]

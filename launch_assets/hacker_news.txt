@@ -1,0 +1,10 @@
+Title: Resonant Phase-Locking: Stabilizing Long-Horizon Reasoning and Continual Adaptation via Phase-Synchronized Feature Routing (paper + code)
+
+I’m releasing a tiny addition to transformers that stabilizes long-horizon reasoning and reduces catastrophic forgetting by phase-synchronizing features that should cohere over time.
+
+Key idea: each token carries a learnable phase; attention logits and MLP routing are modulated by phase alignment (cos Δθ). A Kuramoto-style update uses attention weights as the coupling neighborhood. Features that belong together phase-lock; unrelated ones stay out of phase.
+
+Paper (PDF): [Zenodo DOI link]
+Code: [GitHub link]
+
+Would love critical feedback, ablations you want to see, and hard cases where this breaks.

@@ -1,0 +1,7 @@
+We introduce Resonant Phase-Locking (RPL), a simple, general mechanism for stabilizing long-horizon reasoning and sequential task adaptation in transformer models. 
+RPL augments the residual stream with a lightweight oscillatory state per token—phase θ ∈ [0, 2π) and learnable base frequency ω—and gates attention and MLP updates by phase alignment. 
+Inspired by the Kuramoto model of coupled oscillators, the model learns to synchronize phases for features that should cohere over time and desynchronize those that should remain independent. 
+We implement RPL as (i) phase-modulated attention scores that reward small phase differences (cos Δθ) and (ii) phase-aware MLP routing that locks salient features into stable, reusable "rhythms." 
+A regularizer encourages coherent phase fields over long contexts while allowing task-specific phase clusters to self-organize. 
+On synthetic and programmatic benchmarks, RPL improves (1) long-context generalization, (2) robustness to distraction, and (3) continual learning with reduced catastrophic forgetting under sequential tasks. 
+Ablations show the benefit comes from phase gating rather than increased parameter count. We release code and a reference implementation.
