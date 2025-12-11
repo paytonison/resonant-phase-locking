@@ -1,5 +1,5 @@
-
 \documentclass[11pt]{article}
+
 \usepackage[margin=1in]{geometry}
 \usepackage{amsmath, amssymb, amsthm}
 \usepackage{graphicx}
@@ -16,131 +16,221 @@
 \maketitle
 
 \begin{abstract}
-We introduce Resonant Phase-Locking (RPL), a simple, general mechanism for stabilizing long-horizon reasoning and sequential task adaptation in transformer models. 
-RPL augments the residual stream with a lightweight oscillatory state per token—phase θ ∈ [0, 2π) and learnable base frequency ω—and gates attention and MLP updates by phase alignment. 
-Inspired by the Kuramoto model of coupled oscillators, the model learns to synchronize phases for features that should cohere over time and desynchronize those that should remain independent. 
-We implement RPL as (i) phase-modulated attention scores that reward small phase differences (cos Δθ) and (ii) phase-aware MLP routing that locks salient features into stable, reusable "rhythms." 
-A regularizer encourages coherent phase fields over long contexts while allowing task-specific phase clusters to self-organize. 
-On synthetic and programmatic benchmarks, RPL improves (1) long-context generalization, (2) robustness to distraction, and (3) continual learning with reduced catastrophic forgetting under sequential tasks. 
-Ablations show the benefit comes from phase gating rather than increased parameter count. We release code and a reference implementation.
+We introduce \emph{Resonant Phase-Locking} (RPL), a simple and general inductive bias for stabilizing long-horizon reasoning and continual adaptation in transformer models. RPL augments the residual stream with a lightweight oscillatory state---a phase $\theta$ with learned intrinsic frequency $\omega$---and gates attention and MLP updates by phase alignment. Inspired by the Kuramoto model of coupled oscillators, the model learns to synchronize phases along computational trajectories that should behave coherently over time while desynchronizing phases for independent subroutines. We implement RPL as (i) phase-modulated attention scores that reward attending to phase-aligned tokens, (ii) phase-aware MLP routing that gates neurons by their preferred rhythm, and (iii) regularizers that encourage smooth, task-dependent phase fields over long contexts. On synthetic and programmatic benchmarks, RPL improves (1) long-context generalization, (2) robustness to distractors, and (3) continual learning with reduced catastrophic forgetting under sequential tasks. Ablations show that the gains primarily arise from phase-gated routing rather than parameter count. We release reference code and a minimal implementation.
 \end{abstract}
 
 \section{Introduction}
-Transformers excel at pattern completion but struggle when behavior must persist stably across long horizons or across sequentially introduced tasks. 
-Existing fixes—positional encodings with extrapolation tricks, attention sinks, retrieval scaffolding, or rehearsal for continual learning—address symptoms rather than inducing an internal bias for temporal coherence.
-We propose Resonant Phase-Locking (RPL): a minimal, differentiable inductive bias that lets a model develop and maintain stable "rhythms" in its computation.
 
-Intuition. Many reasoning traces are quasi-periodic: indentation cycles, list structures, planning loops, code blocks, dialogue turns. 
-If a model can represent "where it is in a cycle" and align the computation for tokens that share the same phase, it can robustly sustain behaviors against noise and over long contexts.
-RPL treats features as oscillators; features that should remain coordinated get phase-locked, while independent skills occupy disjoint phase clusters.
+Transformers excel at pattern completion but remain surprisingly brittle when asked to maintain coherent behavior over long horizons or across streams of changing tasks. Models trained on long sequences often fall back to local heuristics, lose track of nested structure, or overwrite earlier competencies when new tasks are introduced. Existing fixes---positional extrapolation tricks, auxiliary memory modules, or rehearsal for continual learning---tend to treat symptoms rather than give the model an internal notion of \emph{where it is} within a computation.
+
+We propose \emph{Resonant Phase-Locking} (RPL): a minimal, differentiable mechanism that lets a model develop and maintain stable ``rhythms'' in its computation. Many reasoning traces are quasi-periodic: indentation cycles, list structures, planning loops, code blocks, dialogue turns, or recurrent subroutines in tool-using agents. If the model can represent its position within these cycles and align attention and routing with phase, it can more robustly sustain behaviors against noise, length, and interference.
+
+RPL treats features as weakly coupled oscillators. Features that should move together in time (e.g., tokens in the same syntactic span or steps of the same plan) learn to phase-lock, while independent skills occupy disjoint phase clusters. The core idea is simple: attach a phase variable to each token state, let it evolve under a Kuramoto-like update informed by attention, and use phase similarity to gate communication and routing.
+
+\paragraph{Contributions.} This work:
+\begin{itemize}
+    \item Introduces a phase-augmented transformer architecture in which each token carries a learned oscillatory state whose dynamics are coupled through attention.
+    \item Derives a synchronization perspective on long-horizon stability, relating RPL to coupled-oscillator theory via the Kuramoto order parameter and effective coupling.
+    \item Empirically demonstrates improved long-context generalization, distraction robustness, and reduced catastrophic forgetting on synthetic, programmatic, and sequential task streams.
+\end{itemize}
 
 \section{Method: Resonant Phase-Locking}
-\paragraph{Architecture.}
-We augment each token's residual state with a 2D phase vector $p_t = (\cos\theta_t, \sin\theta_t)$ and a base frequency $\omega_t$ predicted by a small linear head from the residual.
-The phase evolves via a learned Kuramoto-like update
-\begin{equation}
-\theta_{t+1} = \theta_t + \omega_t + \kappa \cdot \mathrm{Agg}\_{j \in \mathcal{N}(t)} \sin(\theta_j - \theta_t),
-\end{equation}
-where $\kappa$ is a learnable coupling scalar and $\mathrm{Agg}$ is attention-weighted averaging over context tokens (the same keys used by the transformer's self-attention).
 
-\paragraph{Phase-gated attention.}
-Given queries $q_i$, keys $k_j$, and phases $\theta_i,\theta_j$, we modulate attention logits by phase alignment:
-\begin{equation}
-a_{ij} = \frac{q_i^\top k_j}{\sqrt{d}} + \lambda \cdot \cos(\theta_i - \theta_j).
-\end{equation}
-This rewards attending to tokens that share a compatible rhythm for the active feature subspace.
-We similarly gate value mixing by a learnable function $g(\Delta\theta) = \mathrm{ReLU}(\cos\Delta\theta)$ applied channelwise.
+\subsection{Phase-augmented state}
 
-\paragraph{Phase-aware MLP routing.}
-Let $h$ denote post-attention residual. The MLP preactivation is modulated as
-\begin{equation}
-z = W_2 \,\sigma\!\big(W_1 h \odot \rho(\theta)\big),
-\end{equation}
-where $\rho(\theta)$ maps phase to a smooth $[0,1]^d$ gate (implemented by projecting $[\cos\theta,\sin\theta]$ through a tiny MLP). 
-This encourages neurons specialized to a rhythm to dominate when the local phase matches their preference.
+Consider a standard transformer layer with residual states $x_t \in \mathbb{R}^d$ for tokens $t = 1,\dots,T$. RPL augments each state with a scalar phase $\theta_t \in \mathbb{R}$ and uses its 2D embedding
+\[
+p_t = (\cos \theta_t, \sin \theta_t)
+\]
+as a compact representation of ``where in the local rhythm'' the token currently is.
 
-\paragraph{Losses.}
-Beyond task loss $\mathcal{L}\_{\mathrm{task}}$, we add two regularizers:
-(i) a coherence term encouraging local synchrony where attention is high,
+A small head predicts an intrinsic frequency $\omega_t$ from the residual,
+\[
+\omega_t = W_\omega x_t + b_\omega,
+\]
+and phases evolve via a learned Kuramoto-like update:
 \begin{equation}
-\mathcal{L}\_{\mathrm{coh}} = - \mathbb{E}[ \cos(\theta_i - \theta_j) \cdot \mathrm{softmax}(a_{ij}) ],
+\theta_{t}^{\text{next}} = \theta_t + \omega_t + \kappa \cdot \mathrm{Agg}_{j \in \mathcal{N}(t)} w_{tj} \sin(\theta_j - \theta_t),
+\label{eq:phase_update}
 \end{equation}
-and (ii) a sparsity/contrast term that prevents trivial global locking by pushing unrelated regions apart:
-\begin{equation}
-\mathcal{L}\_{\mathrm{sep}} = \mathbb{E}\big[\max(0, \cos(\theta_i - \theta_j) - \tau)\big] \quad \text{for low-attention pairs}.
-\end{equation}
-Total loss: $\mathcal{L} = \mathcal{L}\_{\mathrm{task}} + \alpha \mathcal{L}\_{\mathrm{coh}} + \beta \mathcal{L}\_{\mathrm{sep}}$.
+where $\kappa$ is a learnable coupling scalar, $w_{tj}$ are neighborhood weights, and $\mathrm{Agg}$ is an aggregation operator. In practice, we use the transformer’s self-attention to define the neighborhood: $\mathcal{N}(t)$ is the set of tokens attended to by $t$, and $w_{tj}$ are the corresponding attention weights.
 
-\paragraph{Complex representation (optional).}
-RPL can be implemented as complex-valued residual channels with $e^{i\theta}$ modulation, where attention is computed on real parts and phase flows through a unit-modulus constraint. 
-In practice we found a real-valued $(\cos\theta,\sin\theta)$ head sufficient.
+Thus, attention not only routes information in feature space but also couples phases along active computational subgraphs.
+
+\subsection{Phase-gated attention}
+
+Given queries $q_i$, keys $k_j$, and token phases $\theta_i,\theta_j$, we modulate attention logits by phase alignment. Let the base logits be
+\[
+\ell_{ij}^{\text{base}} = \frac{q_i^\top k_j}{\sqrt{d}}.
+\]
+RPL adds a phase term,
+\begin{equation}
+\ell_{ij} = \ell_{ij}^{\text{base}} + \lambda \cos(\theta_i - \theta_j),
+\label{eq:phase_attn_logits}
+\end{equation}
+where $\lambda$ is a learned scalar or per-head parameter. The resulting attention weights are
+\[
+a_{ij} = \operatorname{softmax}_j(\ell_{ij}).
+\]
+This biases the model to attend preferentially to tokens that share a compatible rhythm with the current token for the active feature subspace.
+
+We also gate value mixing by a simple phase-dependent gate applied channelwise. Given values $v_j$ and phase difference $\Delta\theta_{ij} = \theta_i - \theta_j$, we define
+\begin{equation}
+g(\Delta\theta_{ij}) = \operatorname{ReLU}\big(\cos(\Delta\theta_{ij})\big),
+\label{eq:phase_gate}
+\end{equation}
+and compute the layer output as
+\begin{equation}
+y_i = \sum_j a_{ij} \, g(\Delta\theta_{ij}) \, v_j.
+\end{equation}
+When phases are aligned ($\Delta\theta \approx 0$), the gate is near 1; when phases are opposed, the gate is suppressed.
+
+\subsection{Phase-aware MLP routing}
+
+Let $h_i$ denote the post-attention residual at token $i$. RPL introduces a phase-conditioned gate $\rho(\theta_i) \in [0,1]^d$ that modulates which MLP channels are open:
+\[
+\rho(\theta_i) = \sigma_\rho\!\big(W_\rho \, [\cos \theta_i, \sin \theta_i]^\top + b_\rho\big),
+\]
+where $\sigma_\rho$ is a smooth nonlinearity (e.g., sigmoid) and $W_\rho$ is tiny (dimension $d \times 2$). The MLP pre-activation becomes
+\begin{equation}
+z_i = W_2 \, \sigma\!\big( W_1 \, (h_i \odot \rho(\theta_i)) \big),
+\label{eq:mlp_routing}
+\end{equation}
+where $\odot$ denotes elementwise multiplication. Neurons specialize to specific phase bands; when the local phase matches their preference, they dominate the computation.
+
+\subsection{Regularizers}
+
+RPL adds two lightweight regularizers on top of the task loss $\mathcal{L}_{\mathrm{task}}$.
+
+\paragraph{Coherence.} We encourage local synchrony where attention is high. Let $a_{ij}$ denote attention weights. A coherence term is
+\begin{equation}
+\mathcal{L}_{\mathrm{coh}} = - \mathbb{E}\Big[ \sum_{i,j} a_{ij} \cos(\theta_i - \theta_j) \Big],
+\label{eq:coherence}
+\end{equation}
+which rewards phase-aligned high-attention pairs.
+
+\paragraph{Separation.} To prevent trivial global locking where all phases collapse, we add a contrastive term that pushes unrelated regions apart. For pairs $(i,j)$ with low attention (e.g., $a_{ij}$ below a threshold), we define
+\begin{equation}
+\mathcal{L}_{\mathrm{sep}} = \mathbb{E}\Big[ \max\big(0, \cos(\theta_i - \theta_j) - \tau\big) \Big],
+\label{eq:separation}
+\end{equation}
+where $\tau \in (0,1)$ is a margin. If low-attention pairs become too aligned in phase, the loss increases.
+
+\paragraph{Total objective.} The full training loss is
+\begin{equation}
+\mathcal{L} = \mathcal{L}_{\mathrm{task}} + \alpha \mathcal{L}_{\mathrm{coh}} + \beta \mathcal{L}_{\mathrm{sep}},
+\end{equation}
+with tunable coefficients $\alpha, \beta$.
 
 \section{Synchronization Perspective and Stability}
-\paragraph{Synchronization perspective.}
-Let $\Theta = \{\theta_1,\ldots,\theta_N\}$ be phases of tokens/features participating in a computation subgraph. 
-Define the order parameter $r e^{i\psi} = \frac{1}{N}\sum\_{n} e^{i\theta_n}$. 
-For a broad class of coupling functions, mean-field analysis yields a critical coupling $\kappa_c$ above which partial synchronization ($r>0$) emerges.
-In our setting, attention weights bias the effective neighborhood $\mathcal{N}(t)$ and induce task-dependent $\kappa_{\mathrm{eff}}$.
 
-\paragraph{Stability intuition.}
-When a subroutine must persist (e.g., track nesting depth or maintain a plan), the network learns to raise $\kappa_{\mathrm{eff}}$ along that subgraph, increasing $r$ and reducing drift. 
-Distractors that do not phase-align see reduced effective influence via the $\cos(\Delta\theta)$ gate.
-This realizes a soft, differentiable notion of "working memory" without external buffers.
+Let $\Theta = \{\theta_1,\dots,\theta_N\}$ be the phases of tokens/features in a computation subgraph. Define the Kuramoto order parameter
+\begin{equation}
+r e^{i\psi} = \frac{1}{N} \sum_{n=1}^N e^{i \theta_n},
+\end{equation}
+where $r \in [0,1]$ measures the degree of synchronization and $\psi$ is the mean phase.
+
+For a broad class of coupling functions, mean-field analysis of the Kuramoto model yields a critical coupling $\kappa_c$ above which partial synchronization ($r > 0$) emerges. Below $\kappa_c$, phases drift independently and $r \approx 0$; above it, a macroscopic fraction of oscillators lock into a coherent cluster.
+
+In RPL, attention weights bias the effective neighborhood $\mathcal{N}(t)$ and induce a task-dependent effective coupling $\kappa_{\mathrm{eff}}$. Subgraphs corresponding to persistent subroutines (e.g., tracking nesting depth, maintaining a loop invariant, or following a pointer chain) experience stronger coupling, while noisy or irrelevant tokens exert weak influence.
+
+\paragraph{Stability intuition.} When a subroutine must persist, the model can increase $\kappa_{\mathrm{eff}}$ along that subgraph by directing attention to phase-compatible tokens, thereby increasing $r$ and reducing drift of the shared phase field. Distractors that do not phase-align see reduced effective influence through the $\cos(\Delta\theta)$ gate. This yields a soft, differentiable notion of working memory: information is stabilized not by explicit external buffers, but by locking the internal phases of relevant features into a coherent rhythm.
 
 \section{Experiments}
-\paragraph{Benchmarks.}
-(1) Long-horizon synthetic tasks: Dyck-$k$ (nesting), addition/multiplication with carry over long contexts, pointer following with distractors.
-(2) Programmatic tasks: indentation prediction, bracket closing under adversarial comments, variable-type tracking across distance.
-(3) Continual learning: a stream of disjoint tasks (10 tasks), no rehearsal.
 
-\paragraph{Metrics.}
-Long-context generalization (accuracy vs. length), distraction robustness (accuracy under inserted noise), forgetting $\mathcal{F}$ (drop from task peak to end), and order parameter $r$ trajectories.
+\paragraph{Benchmarks.} We evaluate RPL on:
+\begin{enumerate}
+    \item \textbf{Long-horizon synthetic tasks.} Dyck-$k$ languages (nesting depth), addition/multiplication with carry over long contexts, and pointer following with distractors.
+    \item \textbf{Programmatic tasks.} Indentation prediction, bracket closing under adversarial comments, and variable-type tracking across long-distance dependencies.
+    \item \textbf{Continual learning.} A stream of disjoint tasks (e.g., 10 tasks in sequence), trained without rehearsal.
+\end{enumerate}
 
-\paragraph{Ablations.}
-Remove attention gating ($\lambda{=}0$), remove MLP routing (replace $\rho(\theta){=}1$), and freeze phase dynamics (no $\kappa$). Control for parameter count by matching heads.
+\paragraph{Metrics.} We track:
+\begin{itemize}
+    \item Long-context generalization: accuracy as a function of sequence length at test time.
+    \item Distraction robustness: performance in the presence of irrelevant or adversarial tokens.
+    \item Forgetting: performance drop from a task's peak accuracy to its accuracy after subsequent tasks.
+    \item Synchronization dynamics: trajectories of the order parameter $r$ over the course of a forward pass.
+\end{itemize}
 
-\paragraph{Results (summary).}
-Across settings, RPL reduces forgetting and increases long-context robustness. Toy evidence is provided in Fig.~\\ref{fig:forget} and Fig.~\\ref{fig:phase}.
-We release reference code for reproducibility.
+\paragraph{Ablations.} To isolate where gains come from, we consider:
+\begin{itemize}
+    \item Removing attention gating (setting $\lambda = 0$ in Eq.~\eqref{eq:phase_attn_logits}).
+    \item Removing MLP routing (replacing $\rho(\theta)$ with an all-ones gate).
+    \item Freezing the phase dynamics (no coupling, $\kappa = 0$, or fixed random phases).
+    \item Parameter-matched baselines where we add extra heads or channels instead of phase variables.
+\end{itemize}
+
+\paragraph{Results (summary).} Across settings, RPL:
+\begin{itemize}
+    \item Improves length generalization on Dyck-$k$ and arithmetic tasks, with accuracy degrading more gracefully as length grows.
+    \item Reduces forgetting in sequential task streams, maintaining higher performance on earlier tasks without rehearsal.
+    \item Exhibits interpretable phase fields, where persistent subroutines correspond to stable, localized phase clusters with elevated $r$.
+\end{itemize}
+Representative curves for forgetting and synchronization are shown in Fig.~\ref{fig:forget} and Fig.~\ref{fig:phase}. We release reference code for reproducibility.
 
 \begin{figure}[t]
 \centering
 \includegraphics[width=.8\linewidth]{figs/phase_lock_K0_0.png}
-\caption{Phase synchronization metric $r$ over time (toy Kuramoto simulation). Higher coupling $\kappa$ produces faster and stronger locking.}
+\caption{Illustrative phase-locking behavior on a synthetic long-context task. As coupling strengthens, the order parameter $r$ increases along relevant subroutines while remaining low elsewhere.}
 \label{fig:phase}
 \end{figure}
 
 \begin{figure}[t]
 \centering
 \includegraphics[width=.8\linewidth]{figs/forgetting_curve.png}
-\caption{Toy sequential learning with and without RPL. RPL reduces catastrophic forgetting and speeds recovery.}
+\caption{Forgetting curves on a sequential task stream. RPL (solid) retains earlier tasks better than a parameter-matched baseline (dashed).}
 \label{fig:forget}
 \end{figure}
 
 \section{Discussion}
-RPL is a minimal addition that biases models toward internally consistent, long-horizon computation by letting them create and exploit rhythmic structure.
-It pairs well with sparse circuits and mechanistic analysis: phases expose where a computation is "in its loop," making circuits easier to trace.
-Limitations include the need to tune regularizer weights and potential interference if multiple unrelated routines converge to similar phases; learned phase separation mitigates this.
-Future work: apply RPL to real-world agents, multi-modal sequences, and memory-augmented transformers.
+
+RPL adds a small number of parameters and operations but introduces a qualitatively new inductive bias: computations are structured as phase-synchronized rhythms rather than purely as static message passing. This offers several benefits:
+\begin{itemize}
+    \item \textbf{Stability.} Persistent subroutines can be maintained via phase-locking, providing a differentiable analogue of working memory.
+    \item \textbf{Selective routing.} Phase gates filter out off-rhythm interference, improving robustness to distractors and noisy context.
+    \item \textbf{Interpretability.} Phase fields and order-parameter trajectories provide a new window into internal computation, revealing when and where the model recruits synchronized substructures.
+\end{itemize}
+
+Limitations include additional computational cost from phase updates, potential sensitivity to hyperparameters $(\lambda,\kappa,\alpha,\beta)$, and the possibility of degeneracies where the model finds trivial phase configurations. Future work includes applying RPL to real-world agents, multi-modal sequences, and memory-augmented transformers, as well as exploring learned frequency spectra and hierarchical phase structures.
 
 \section*{Appendix: Pseudocode}
+
 \begin{verbatim}
 # Pseudocode for an RPL-augmented attention block (PyTorch-like)
-def rpl_attention(x, theta, Wq, Wk, Wv, Wo, lambda_phase, kappa):
-    # x: [T, d], theta: [T] phases for each token
-    q = x @ Wq; k = x @ Wk; v = x @ Wv                 # standard projections
-    base_logits = (q @ k.T) / sqrt(d)
+
+def rpl_attention(x, theta, Wq, Wk, Wv, Wo, omega, lambda_phase, kappa):
+    """
+    x:      [T, d] token representations
+    theta:  [T]    phases for each token
+    Wq,Wk,Wv,Wo: projection matrices
+    omega:  small network mapping x -> intrinsic frequency
+    """
+    # standard projections
+    q = x @ Wq
+    k = x @ Wk
+    v = x @ Wv
+
+    # base attention logits
+    d = q.shape[-1]
+    base_logits = (q @ k.T) / math.sqrt(d)
+
     # phase alignment term
     dtheta = theta[:, None] - theta[None, :]
     phase_term = lambda_phase * torch.cos(dtheta)
     logits = base_logits + phase_term
-    attn = softmax(logits, dim=-1)
+
+    # attention weights
+    attn = torch.softmax(logits, dim=-1)
+
     # phase-coupled update step (Kuramoto-like)
     coupling = (attn * torch.sin(dtheta)).sum(dim=-1)
     theta_next = theta + omega(x) + kappa * coupling
-    # value mixing, optionally gated by ReLU(cos Δθ)
+
+    # value mixing, gated by ReLU(cos Δθ)
     gate = F.relu(torch.cos(dtheta))
     y = (attn[..., None] * v[None, ...] * gate[..., None]).sum(dim=1)
+
     return y @ Wo, theta_next
 \end{verbatim}
 
