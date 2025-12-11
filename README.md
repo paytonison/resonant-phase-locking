@@ -22,4 +22,4 @@ See [`code/rpl_demo.py`](code/rpl_demo.py). Integrate `rpl_attention` into your 
 - `L_sep`: prevent trivial global locking by separating low-attention pairs
 
 ## Citing
-A DOI will be available after you upload the PDF to Zenodo.
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.17606823.svg)](https://doi.org/10.5281/zenodo.17606823)
